@@ -404,8 +404,8 @@
     <script>
         let viewer;
         let currentZoom = 1;
-        const zoomStep = 0.1;
-        const minZoom = 0.5;
+        const zoomStep = 0.05;
+        const minZoom = 0.1;
         const maxZoom = 3;
         let panX = 0;
         let panY = 0;
@@ -413,12 +413,38 @@
         let syncTimeout = null;
         let suppressXmlSync = false;
 
+        // Leeres BPMN Template
+        const emptyBPMN = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn2:definitions xmlns:bpmn2="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" id="sample-diagram" targetNamespace="http://example.org/bpmn">
+  <bpmn2:process id="Process_1" isExecutable="false">
+  </bpmn2:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Process_1">
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn2:definitions>`;
+
         // Initialisiere den BPMN Modeler
         async function initViewer() {
             try {
                 viewer = new BpmnJS({
                     container: '#canvas'
                 });
+
+                // Lade leeres Diagramm
+                try {
+                    suppressXmlSync = true;
+                    await viewer.importXML(emptyBPMN);
+                    suppressXmlSync = false;
+                    document.getElementById('xmlInput').value = emptyBPMN;
+                    const canvas = viewer.get('canvas');
+                    canvas.zoom('fit-viewport');
+                    currentZoom = 1;
+                    updateZoomDisplay();
+                } catch (error) {
+                    console.error('Error loading empty BPMN:', error);
+                    suppressXmlSync = false;
+                }
 
                 // Automatische XML-Synchronisierung bei Diagramm-Änderungen
                 const eventBus = viewer.get('eventBus');
@@ -481,9 +507,58 @@
                 });
                 // Kontextmenü unterdrücken auf Canvas
                 canvasEl.addEventListener('contextmenu', (e) => e.preventDefault());
+
+                // Tastenkombinationen einrichten
+                setupKeyboardShortcuts();
             } catch (error) {
                 console.error('Fehler beim Initialisieren des Viewers:', error);
             }
+        }
+
+        // Tastenkombinationen einrichten
+        function setupKeyboardShortcuts() {
+            document.addEventListener('keydown', (e) => {
+                if (!viewer) return;
+
+                // Ctrl+Z - Undo
+                if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+                    e.preventDefault();
+                    const commandStack = viewer.get('commandStack');
+                    commandStack.undo();
+                }
+                // Ctrl+Shift+Z oder Ctrl+Y - Redo
+                else if (((e.ctrlKey || e.metaKey) && e.key === 'z' && e.shiftKey) || 
+                         ((e.ctrlKey || e.metaKey) && e.key === 'y')) {
+                    e.preventDefault();
+                    const commandStack = viewer.get('commandStack');
+                    commandStack.redo();
+                }
+                // Ctrl+A - Select All (wenn Canvas fokussiert)
+                else if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
+                    const canvas = document.getElementById('canvas');
+                    if (document.activeElement === canvas || canvas.contains(document.activeElement)) {
+                        e.preventDefault();
+                        const selection = viewer.get('selection');
+                        const elementRegistry = viewer.get('elementRegistry');
+                        const allElements = elementRegistry.getAll().filter(el => el.type !== 'bpmn:Process' && el.type !== 'bpmn:Collaboration');
+                        selection.select(allElements);
+                    }
+                }
+                // Delete oder Backspace - Löschen (nur wenn Elemente ausgewählt sind)
+                else if ((e.key === 'Delete' || e.key === 'Backspace')) {
+                    const selection = viewer.get('selection');
+                    const selectedElements = selection.get();
+                    if (selectedElements && selectedElements.length > 0) {
+                        e.preventDefault();
+                        // Element klonen damit es sich nicht während dem Löschen ändert
+                        const elementsToDelete = Array.from(selectedElements);
+                        const commandStack = viewer.get('commandStack');
+                        // Alle Elemente auf einmal löschen via removeElements
+                        const modeling = viewer.get('modeling');
+                        modeling.removeElements(elementsToDelete);
+                    }
+                }
+            });
         }
 
         async function syncXmlFromDiagram() {
